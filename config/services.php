@@ -35,4 +35,9 @@ return [
         ],
     ],
 
+    'user_api' => [
+        'url' => env('USER_API_URL', 'https://api.example.com'),
+        'key' => env('USER_API_KEY', 'your-api-key'),
+    ],
+
 ];
