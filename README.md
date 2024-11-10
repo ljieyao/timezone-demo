@@ -1,66 +1,149 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# User Sync Feature Documentation
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+## Overview
 
-## About Laravel
+This feature synchronizes user data with a third-party API service, handling large batches of users while respecting API rate limits. The system processes user updates by batching users in groups of 1,000, queuing updates to respect rate limits (50 batches/hour), providing robust error handling and retry logic, with comprehensive logging throughout the process.
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+## Components
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+1. UserSyncService
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+-   Handles batching of users into groups of 1,000
+-   Manages job dispatching with 72-second delays between batches
+-   Ensures compliance with rate limits
+-   Logs batch creation and dispatch events
 
-## Learning Laravel
+2. ExternalUserApi
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+-   Manages all communication with the third-party API
+-   Handles API responses and error conditions
+-   Provides detailed logging of API interactions
+-   Tracks request durations and response statuses
 
-You may also try the [Laravel Bootcamp](https://bootcamp.laravel.com), where you will be guided through building a modern Laravel application from scratch.
+3. SyncUserBatch Job
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+-   Processes individual batches of users
+-   Implements 3-attempt retry logic with 60-second backoff
+-   Logs job progress, attempts, and failures
+-   Handles permanent failures appropriately
 
-## Laravel Sponsors
+## API Rate Limits
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+-   Maximum 50 batch requests per hour
+-   Maximum 1,000 records per batch
+-   Total capacity: 50,000 updates per hour
 
-### Premium Partners
+## Configuration Required
 
-- **[Vehikl](https://vehikl.com/)**
-- **[Tighten Co.](https://tighten.co)**
-- **[WebReinvent](https://webreinvent.com/)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel/)**
-- **[Cyber-Duck](https://cyber-duck.co.uk)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Jump24](https://jump24.co.uk)**
-- **[Redberry](https://redberry.international/laravel/)**
-- **[Active Logic](https://activelogic.com)**
-- **[byte5](https://byte5.de)**
-- **[OP.GG](https://op.gg)**
+### Environment Variables:
 
-## Contributing
+USER_API_URL=https://api.example.com
+USER_API_KEY=your-api-key
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+### Queue Configuration:
 
-## Code of Conduct
+-   Uses 'user-sync' queue
+-   Database driver recommended
+-   90-second retry_after setting
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+## Usage Examples
 
-## Security Vulnerabilities
+1. Basic Usage:
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+    ```php
+    $users = User::where('updated_at', '>', now()->subHour())->get();
+    $syncService = new UserSyncService();
+    $syncService->syncUsers($users);
+    ```
 
-## License
+2. Queue Worker:
+    ```bash
+    php artisan queue:work --queue=user-sync
+    ```
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+## Error Handling Strategy
+
+-   Three total attempts per job
+-   60-second delay between retry attempts
+-   Comprehensive error logging
+-   Failed jobs stored in failed_jobs table
+
+## Logging Implementation
+
+1. Service Level Logs:
+
+-   Batch creation events
+-   Total users and batch counts
+-   Scheduling information
+
+2. API Level Logs:
+
+-   Request/response details
+-   Duration tracking
+-   Error conditions
+-   Request IDs for tracing
+
+3. Job Level Logs:
+
+-   Processing status
+-   Retry attempts
+-   Failure conditions
+-   Job IDs for tracking
+
+## Data Format
+
+The API expects batched user data in this structure:
+
+```json
+{
+    "batches": [
+        {
+            "subscribers": [
+                {
+                    "email": "user@example.com",
+                    "name": "John Doe",
+                    "time_zone": "UTC"
+                }
+            ]
+        }
+    ]
+}
+```
+
+## Troubleshooting Guide
+
+1. Common Issues:
+
+    - Rate limit exceeded
+    - API timeouts
+    - Data validation errors
+    - Queue worker issues
+
+2. Resolution Steps:
+
+    - Check logs for error details
+    - Verify API credentials
+    - Review batch configurations
+    - Check network connectivity
+
+3. Prevention:
+    - Regular log review
+    - Monitor queue performance
+    - Track API rate limits
+    - Test data validation
+
+## Testing
+
+Run tests with:
+
+```bash
+php artisan test --filter=UserSyncTest
+```
+
+Test coverage includes:
+
+-   Batch size validation
+-   API error handling
+-   Rate limit compliance
+-   Retry logic verification
+-   Log entry validation
